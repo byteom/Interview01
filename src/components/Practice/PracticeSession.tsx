@@ -8,6 +8,7 @@ import { AIProviderSelector } from './AIProviderSelector';
 import { RatingModeSelector } from './RatingModeSelector';
 import { AnswerInput } from './AnswerInput';
 import { SimpleCameraMonitor } from './SimpleCameraMonitor';
+import { AdvancedCameraProctor } from './AdvancedCameraProctor';
 import {
   ArrowLeft,
   Code,
@@ -79,18 +80,35 @@ interface SpeechRecognition extends EventTarget {
   onnomatch: (() => void) | null;
 }
 
-interface PresenceMonitoringReport {
+export interface PresenceMonitoringReport {
   sessionDuration: number;
-  totalChecks: number;
-  successfulChecks: number;
-  presenceRate: number;
-  averageBrightness: number;
-  motionLevel: number;
-  multiplePersonsDetected: boolean;
-  deviceDetected: boolean;
-  startTime: string;
-  endTime: string;
+  totalDetections: number;
+  averageConfidence: number;
+  faceDetectionRate: number;
+  violations: {
+    faceNotDetected: number;
+    multipleFaces: number;
+    lookingAway: number;
+    faceObscured: number;
+    suspiciousMovement: number;
+  };
+  headPoseStats: {
+    averageYaw: number;
+    averagePitch: number;
+    averageRoll: number;
+    maxYawDeviation: number;
+    maxPitchDeviation: number;
+  };
+  eyeMovementStats: {
+    averageEAR: number;
+    blinkCount: number;
+    blinkRate: number;
+  };
+  attentionScore: number;
+  stabilityScore: number;
   overallScore: number;
+  presenceRate:number,
+  recommendations: string[];
 }
 
 export const PracticeSession: React.FC = () => {
@@ -414,7 +432,7 @@ export const PracticeSession: React.FC = () => {
 
   const handleReport = (report: PresenceMonitoringReport) => {
     setPresenceReport(report);
-    addDebugLog(`Monitoring report generated: ${report.presenceRate}% presence rate`, 'success');
+    addDebugLog(`Monitoring report generated.`, 'success');
   };
 
   const submitAnswer = async (evalType: 'simple' | 'detailed' = evaluationType) => {
@@ -809,11 +827,11 @@ export const PracticeSession: React.FC = () => {
         {/* Simple Camera Monitor Component */}
         {proctorMode === 'enabled' && (
           <div className="mb-6">
-            <SimpleCameraMonitor
+            <AdvancedCameraProctor
               isEnabled={proctorMode === 'enabled'}
               onCameraReady={handleCameraReady}
               onViolation={handleViolation}
-              onReport={handleReport}
+              onFaceReport={handleReport}
             />
           </div>
         )}

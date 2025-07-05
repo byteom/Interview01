@@ -1,6 +1,9 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { PresenceMonitoringReport } from './PracticeSession';
 import Webcam from 'react-webcam';
 import * as faceapi from 'face-api.js';
+import * as cocoSsd from '@tensorflow-models/coco-ssd';
+import '@tensorflow/tfjs';
 import { 
   Camera, 
   CameraOff, 
@@ -11,17 +14,38 @@ import {
   ShieldOff,
   Brain,
   Activity,
-  BarChart3
+  BarChart3,
+  LineChart ,
+  NotebookPen
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import * as cocoSsd from '@tensorflow-models/coco-ssd';
-import '@tensorflow/tfjs';
 
+const ScoreBar = ({ label, value, color }: { label: string; value: number; color: string }) => (
+  <div className="mb-4">
+    <div className="flex justify-between text-sm font-medium mb-1">
+      <span>{label}</span>
+      <span>{value}%</span>
+    </div>
+    <div className="w-full h-2 bg-gray-200 rounded">
+      <div
+        className={`h-full rounded ${color}`}
+        style={{ width: `${value}%` }}
+      ></div>
+    </div>
+  </div>
+);
+
+const Metric = ({ label, value }: { label: string; value: number | string }) => (
+  <div className="flex justify-between py-1 border-b border-gray-200 text-sm">
+    <span className="text-gray-500">{label}</span>
+    <span className="font-medium text-gray-800">{value}</span>
+  </div>
+);
 interface AdvancedCameraProctorProps {
   isEnabled: boolean;
   onCameraReady: (isReady: boolean) => void;
-  onViolation: (type: 'face_not_detected' | 'multiple_faces' | 'looking_away' | 'face_obscured' | 'suspicious_movement' | 'electronic_device_detected') => void;
-  onFaceReport?: (report: FaceMonitoringReport) => void;
+  onViolation: (type: 'face_not_detected' | 'multiple_faces' | 'looking_away' | 'face_obscured' | 'suspicious_movement') => void;
+  onFaceReport?: (report: PresenceMonitoringReport) => void;
 }
 
 interface FaceMetrics {
@@ -37,36 +61,35 @@ interface FaceMetrics {
   expressions?: any;
 }
 
-interface FaceMonitoringReport {
-  sessionDuration: number;
-  totalDetections: number;
-  averageConfidence: number;
-  faceDetectionRate: number;
-  violations: {
-    faceNotDetected: number;
-    multipleFaces: number;
-    lookingAway: number;
-    faceObscured: number;
-    suspiciousMovement: number;
-    electronicDeviceDetected: number;
-  };
-  headPoseStats: {
-    averageYaw: number;
-    averagePitch: number;
-    averageRoll: number;
-    maxYawDeviation: number;
-    maxPitchDeviation: number;
-  };
-  eyeMovementStats: {
-    averageEAR: number;
-    blinkCount: number;
-    blinkRate: number;
-  };
-  attentionScore: number;
-  stabilityScore: number;
-  overallScore: number;
-  recommendations: string[];
-}
+// interface FaceMonitoringReport {
+//   sessionDuration: number;
+//   totalDetections: number;
+//   averageConfidence: number;
+//   faceDetectionRate: number;
+//   violations: {
+//     faceNotDetected: number;
+//     multipleFaces: number;
+//     lookingAway: number;
+//     faceObscured: number;
+//     suspiciousMovement: number;
+//   };
+//   headPoseStats: {
+//     averageYaw: number;
+//     averagePitch: number;
+//     averageRoll: number;
+//     maxYawDeviation: number;
+//     maxPitchDeviation: number;
+//   };
+//   eyeMovementStats: {
+//     averageEAR: number;
+//     blinkCount: number;
+//     blinkRate: number;
+//   };
+//   attentionScore: number;
+//   stabilityScore: number;
+//   overallScore: number;
+//   recommendations: string[];
+// }
 
 export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
   isEnabled,
@@ -74,9 +97,10 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
   onViolation,
   onFaceReport,
 }) => {
+  const [cocoModel, setCocoModel] = useState<any>(null);
   const webcamRef = useRef<Webcam>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
-  const detectionIntervalRef = useRef<ReturnType<typeof setInterval>>();
+  const detectionIntervalRef = useRef<NodeJS.Timeout>();
   
   const [cameraPermission, setCameraPermission] = useState<'granted' | 'denied' | 'pending'>('pending');
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -93,7 +117,7 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
   const [lastViolationTime, setLastViolationTime] = useState(0);
   const [suspiciousMovementCount, setSuspiciousMovementCount] = useState(0);
   const [lastFacePosition, setLastFacePosition] = useState<{x: number, y: number} | null>(null);
-  
+  const [IsReportReady, setIsReportReady] = useState(false)
   // Face monitoring statistics
   const [sessionStartTime, setSessionStartTime] = useState<number>(0);
   const [detectionHistory, setDetectionHistory] = useState<Array<{
@@ -107,8 +131,8 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
   const [modelLoadAttempts, setModelLoadAttempts] = useState(0);
   const [modelLoadError, setModelLoadError] = useState<string | null>(null);
 
-  const [cocoModel, setCocoModel] = useState<any>(null);
-
+  const lookTimeRef = useRef(0);
+  const [report, setReport] = useState<PresenceMonitoringReport | null>(null)
   // Load face-api.js models with better error handling and retry mechanism
   const loadModels = useCallback(async () => {
     try {
@@ -117,27 +141,24 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
       setModelLoadError(null);
       
       // Use multiple CDN sources for better reliability
-      const modelUrls = [
-        '/models', // Try local models first (in public/models)
-        'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@latest/model',
-        'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights',
-        'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights'
-      ];
+      // const modelUrls = [
+      //   '/models', // Try local models first (in public/models)
+      //   'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@latest/model',
+      //   'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights',
+      //   'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights'
+      // ];
       
       let modelsLoadedSuccessfully = false;
       
-      for (const modelUrl of modelUrls) {
+      // for (const modelUrl of modelUrls) {
         try {
-          console.log(`🔄 Trying to load models from: ${modelUrl}`);
-          setModelLoadingProgress(`Loading from ${modelUrl.includes('vladmandic') ? 'vladmandic CDN' : 
-                                  modelUrl.includes('jsdelivr') ? 'jsDelivr CDN' : 
-                                  modelUrl === '/models' ? 'local models' : 'GitHub CDN'}...`);
+    
           
           // Set a timeout for model loading
           const loadPromise = Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
-            faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl),
-            faceapi.nets.faceExpressionNet.loadFromUri(modelUrl)
+            faceapi.nets.tinyFaceDetector.loadFromUri("/models"),
+            faceapi.nets.faceLandmark68Net.loadFromUri("/models"),
+            faceapi.nets.faceExpressionNet.loadFromUri("/models")
           ]);
           
           // Create a timeout promise
@@ -148,14 +169,12 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
           // Race between loading and timeout
           await Promise.race([loadPromise, timeoutPromise]);
           
-          console.log(`✅ Models loaded successfully from: ${modelUrl}`);
+          console.log(`✅ Models loaded successfully from: local models`);
           modelsLoadedSuccessfully = true;
-          break;
         } catch (error) {
-          console.warn(`⚠️ Failed to load from ${modelUrl}:`, error);
-          continue;
+          console.warn(`⚠️ Failed to load from local models:`, error);
         }
-      }
+    
       
       if (!modelsLoadedSuccessfully) {
         throw new Error('Failed to load models from all sources');
@@ -200,37 +219,63 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
   // Calculate head pose angles
   const calculateHeadPoseFromLandmarks = useCallback((nose: any, leftEye: any, rightEye: any, jawLine: any) => {
     try {
-      const noseTip = nose[3] || nose[0];
+      const noseTip = nose[3] || nose[4];
       const leftEyeCenter = leftEye[3] || leftEye[0];
       const rightEyeCenter = rightEye[3] || rightEye[0];
+      const chin = jawLine[8];
       
-      if (!noseTip || !leftEyeCenter || !rightEyeCenter) {
+      if (!noseTip || !leftEyeCenter || !rightEyeCenter || !chin) {
         return { yaw: 0, pitch: 0, roll: 0 };
       }
       
+      // Calculate reference points
       const eyeCenter = {
         x: (leftEyeCenter.x + rightEyeCenter.x) / 2,
         y: (leftEyeCenter.y + rightEyeCenter.y) / 2
       };
-
-      const yaw = Math.atan2(noseTip.x - eyeCenter.x, 0.1) * (180 / Math.PI);
-      const pitch = Math.atan2(noseTip.y - eyeCenter.y, 50) * (180 / Math.PI);
-      const roll = Math.atan2(rightEyeCenter.y - leftEyeCenter.y, rightEyeCenter.x - leftEyeCenter.x) * (180 / Math.PI);
-
-      return { yaw, pitch, roll };
+      
+      const faceWidth = Math.abs(rightEyeCenter.x - leftEyeCenter.x);
+      const faceHeight = Math.abs(chin.y - eyeCenter.y);
+      
+      // YAW calculation (horizontal head turn)
+      const noseHorizontalOffset = noseTip.x - eyeCenter.x;
+      const yawRatio = noseHorizontalOffset / faceWidth;
+      const yaw = yawRatio * 60; // Scale to realistic range
+      
+      // PITCH calculation (vertical head tilt)
+      const noseVerticalOffset = noseTip.y - eyeCenter.y;
+      const pitchRatio = noseVerticalOffset / faceHeight;
+      const pitch = pitchRatio * 40; // Scale to realistic range
+      
+      // ROLL calculation (head rotation)
+      const eyeVector = {
+        x: rightEyeCenter.x - leftEyeCenter.x,
+        y: rightEyeCenter.y - leftEyeCenter.y
+      };
+      const roll = Math.atan2(eyeVector.y, eyeVector.x) * (180 / Math.PI);
+      
+      // Apply realistic limits and smoothing
+      const clampedYaw = Math.max(-60, Math.min(60, yaw));
+      const clampedPitch = Math.max(-40, Math.min(40, pitch));
+      const clampedRoll = Math.max(-30, Math.min(30, roll));
+      
+      return { 
+        yaw: parseFloat(clampedYaw.toFixed(1)), 
+        pitch: parseFloat(clampedPitch.toFixed(1)), 
+        roll: parseFloat(clampedRoll.toFixed(1))
+      };
+      
     } catch (error) {
       console.warn('Error calculating head pose:', error);
       return { yaw: 0, pitch: 0, roll: 0 };
     }
   }, []);
-
   // Process face-api.js detections
   const processFaceAPIDetections = useCallback((detections: any[]) => {
     try {
       const detection = detections[0]; // Focus on primary face
       const landmarks = detection.landmarks;
       const box = detection.detection.box;
-
       // Calculate eye aspect ratio
       const leftEye = landmarks.getLeftEye();
       const rightEye = landmarks.getRightEye();
@@ -245,7 +290,7 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
 
       // Calculate face size
       const faceSize = Math.sqrt(box.width * box.height);
-
+      
       return {
         faceCount: detections.length,
         eyeAspectRatio,
@@ -285,8 +330,9 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
         .withFaceExpressions();
 
       console.log(`🔍 Face detection result: ${detections.length} face(s) detected`);
-
+        // toast.success(""+detections[0])
       // Update overlay canvas
+      if(sessionStartTime==0) setSessionStartTime(Math.floor(Date.now()))
       if (overlayCanvasRef.current) {
         const canvas = overlayCanvasRef.current;
         const displaySize = { width: video.videoWidth, height: video.videoHeight };
@@ -330,7 +376,7 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
       if (detections.length > 0) {
         const faceMetrics = processFaceAPIDetections(detections);
         setFaceMetrics(faceMetrics);
-        
+        lookTimeRef.current=lookTimeRef.current+1;
         // Record detection data for report
         const timestamp = Date.now();
         setDetectionHistory(prev => [...prev.slice(-100), { // Keep last 100 detections
@@ -347,7 +393,7 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
         }
 
         checkFaceAPIViolations(detections);
-        detectDevices(video);
+        detectDevices(video)
       } else {
         setFaceMetrics(prev => ({ ...prev, faceCount: 0, confidence: 0 }));
         handleViolation('face_not_detected', 'high');
@@ -356,12 +402,12 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
       console.error('❌ Face detection error:', error);
       // Don't throw error, just log it to prevent breaking the detection loop
     }
-  }, [modelsLoaded, processFaceAPIDetections]);
+  }, [modelsLoaded, processFaceAPIDetections,faceMetrics]);
 
   // Check violations for face-api.js
   const checkFaceAPIViolations = useCallback((detections: any[]) => {
     const now = Date.now();
-    
+    console.log("now processing",faceMetrics)
     // Multiple faces
     if (detections.length > 1) {
       handleViolation('multiple_faces', 'high');
@@ -370,12 +416,12 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
     // Looking away (head pose)
     if (detections.length > 0) {
       const { yaw, pitch } = faceMetrics.headPose;
-      if (Math.abs(yaw) > 30 || Math.abs(pitch) > 25) {
+      if (Math.abs(yaw) > 15 || (pitch<5 || pitch > 20)) {
         handleViolation('looking_away', 'medium');
       }
 
       // Face too small (moved away from camera)
-      if (faceMetrics.faceSize < 5000) {
+      if (faceMetrics.faceSize < 200) {
         handleViolation('face_obscured', 'medium');
       }
 
@@ -445,11 +491,6 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
         high: '🚨 Excessive movement detected',
         medium: '⚠️ Please remain still',
         low: 'ℹ️ Movement detected'
-      },
-      electronic_device_detected: {
-        high: '🚨 Electronic device detected in frame!',
-        medium: '⚠️ Possible device detected',
-        low: 'ℹ️ Unusual object detected'
       }
     };
 
@@ -459,11 +500,12 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
       toast.error(message);
     } else if (severity === 'medium') {
       toast(message, { icon: '⚠️' });
+      
     }
   }, [lastViolationTime, onViolation]);
 
   // Generate comprehensive face monitoring report
-  const generateFaceReport = useCallback((): FaceMonitoringReport => {
+  const generateFaceReport = useCallback((): PresenceMonitoringReport => {
     const sessionDuration = (Date.now() - sessionStartTime) / 1000; // in seconds
     const totalDetections = detectionHistory.length;
     
@@ -479,7 +521,6 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
           lookingAway: violations.filter(v => v.type === 'looking_away').length,
           faceObscured: violations.filter(v => v.type === 'face_obscured').length,
           suspiciousMovement: violations.filter(v => v.type === 'suspicious_movement').length,
-          electronicDeviceDetected: 0,
         },
         headPoseStats: {
           averageYaw: 0,
@@ -496,6 +537,7 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
         attentionScore: 0,
         stabilityScore: 0,
         overallScore: 0,
+        presenceRate: 0,
         recommendations: ['No face data collected during session']
       };
     }
@@ -532,7 +574,8 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
     ));
     
     const overallScore = (attentionScore + stabilityScore + (averageConfidence * 100)) / 3;
-    
+    //Calculate how long the presence was recorded
+    const presenceRate=Number(((lookTimeRef.current/sessionDuration)*100).toFixed(2))
     // Generate recommendations
     const recommendations: string[] = [];
     if (faceDetectionRate < 90) recommendations.push('Improve camera positioning for better face detection');
@@ -558,7 +601,6 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
         lookingAway: violations.filter(v => v.type === 'looking_away').length,
         faceObscured: violations.filter(v => v.type === 'face_obscured').length,
         suspiciousMovement: violations.filter(v => v.type === 'suspicious_movement').length,
-        electronicDeviceDetected: 0,
       },
       headPoseStats: {
         averageYaw,
@@ -575,6 +617,7 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
       attentionScore,
       stabilityScore,
       overallScore,
+      presenceRate:presenceRate>100?100:presenceRate,
       recommendations
     };
   }, [sessionStartTime, detectionHistory, violations, blinkHistory]);
@@ -582,11 +625,11 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
   // Start monitoring
   const startMonitoring = useCallback(() => {
     if (!isEnabled || !modelsLoaded) return;
-
+    
     console.log('🚀 Starting Face-API.js monitoring...');
     setIsMonitoring(true);
-    setSessionStartTime(Date.now());
-    
+
+    if(detectionIntervalRef.current) clearInterval(detectionIntervalRef.current);
     const interval = setInterval(detectFacesWithFaceAPI, 1000); // Every 1 second for better performance
     detectionIntervalRef.current = interval;
 
@@ -595,68 +638,85 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
         clearInterval(detectionIntervalRef.current);
       }
     };
-  }, [isEnabled, modelsLoaded, detectFacesWithFaceAPI]);
+  }, [isEnabled, modelsLoaded, detectFacesWithFaceAPI, isMonitoring]);
 
   // Stop monitoring and generate report
   const stopMonitoring = useCallback(() => {
     if (detectionIntervalRef.current) {
-      clearInterval(detectionIntervalRef.current);
+      clearInterval(detectionIntervalRef.current);    
     }
-    
+    overlayCanvasRef.current?.getContext("2d")?.reset()
     if (isMonitoring && onFaceReport) {
-      const report = generateFaceReport();
-      onFaceReport(report);
+      // const report = generateFaceReport(); 
+      setReport(generateFaceReport())   
+      if (report) onFaceReport(report);
     }
-    
+    // if(webcamRef.current?.video)webcamRef.current.video = null;
+    const stream = webcamRef.current?.video?.srcObject as MediaStream;
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop()); // ✅ Stop camera
+    }
+    if (webcamRef.current?.video) {
+      webcamRef.current.video.srcObject = null;
+    }
+    // const videoTrack = webcamRef.current?.stream?.getTracks()
+    // if(videoTrack) {videoTrack.forEach(track=>track.stop())}
+   
+    // if(webcamRef.current?.video) webcamRef.current.video.srcObject=null
+        // stops webcam
+    setSessionStartTime(0)
     setIsMonitoring(false);
-  }, [isMonitoring, generateFaceReport, onFaceReport]);
+    setIsReportReady(true);
+    lookTimeRef.current=0
+
+  }, [isMonitoring, generateFaceReport, onFaceReport, IsReportReady]);
 
   useEffect(() => {
     if (isEnabled) {
       loadModels();
     }
     
-    return () => {
-      stopMonitoring();
-    };
-  }, [isEnabled, loadModels]);
+    // return () => {
+    //   stopMonitoring();
+    // };
+  }, [isEnabled]);
 
   useEffect(() => {
     if (modelsLoaded && isEnabled) {
       startMonitoring();
     }
     
-    return () => {
-      stopMonitoring();
-    };
+    // return () => {
+    //   stopMonitoring();
+    // };
   }, [modelsLoaded, isEnabled, startMonitoring]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopMonitoring();
-    };
-  }, [stopMonitoring]);
+ ;
 
   const requestCameraPermission = async () => {
+   
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: 640, 
-          height: 480,
-          facingMode: 'user'
-        } 
-      });
-      setCameraPermission('granted');
+
+    setSessionStartTime(Date.now());
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: 'user' },
+      audio: false
+    });
+    if (webcamRef.current && webcamRef.current.video) {
+      webcamRef.current.video.srcObject = stream;
+    }
+        
+      setCameraPermission("granted");
+      setIsMonitoring(true)
       onCameraReady(true);
       toast.success('📹 Camera access granted - Face-API.js proctoring active');
-      
-      stream.getTracks().forEach(track => track.stop());
-    } catch (error) {
-      console.error('Camera permission denied:', error);
-      setCameraPermission('denied');
+ 
+   
+    } catch (err) {
+      console.error("Error accessing camera:", err);
+      toast.error('Camera access is required for face monitoring'+err);
+    setCameraPermission('denied');
       onCameraReady(false);
-      toast.error('Camera access is required for face monitoring');
     }
   };
 
@@ -671,7 +731,6 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
     onCameraReady(false);
     toast.error('Failed to access camera. Please check permissions.');
   };
-
   useEffect(() => {
     cocoSsd.load().then(setCocoModel);
   }, []);
@@ -690,6 +749,16 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
       handleViolation('electronic_device_detected', 'high');
     }
   };
+
+useEffect(() => {
+  return ()=>{   const stream = webcamRef.current?.video?.srcObject as MediaStream;
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop()); // ✅ Stop camera
+    }
+    if (webcamRef.current?.video) {
+      webcamRef.current.video.srcObject = null;
+    }}
+}, [])
 
   if (!isEnabled) {
     return (
@@ -778,7 +847,7 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
             <div className="text-sm font-medium text-blue-600 dark:text-blue-400 transition-colors duration-200">Face-API.js</div>
           </div>
           
-          {faceMetrics.faceCount > 0 ? (
+          {faceMetrics.faceCount > 0 && !IsReportReady? (
             <div className="flex items-center space-x-1 text-green-600 dark:text-green-400 transition-colors duration-200">
               <Eye className="h-4 w-4" />
               <span className="text-sm font-medium">
@@ -836,7 +905,9 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
               height={480}
             />
             
+            
             {/* Status Overlays */}
+            {!IsReportReady && (<>
             <div className="absolute top-2 left-2 space-y-1">
               <div className={`px-2 py-1 rounded text-xs font-medium ${
                 faceMetrics.faceCount === 1 ? 'bg-green-500 text-white' : 
@@ -847,21 +918,264 @@ export const AdvancedCameraProctor: React.FC<AdvancedCameraProctorProps> = ({
                  faceMetrics.faceCount === 1 ? '✓ Face Detected' : 
                  `⚠ ${faceMetrics.faceCount} Faces`}
               </div>
-              {/* Multiple faces warning */}
-              {faceMetrics.faceCount > 1 && (
-                <div className="bg-yellow-500 text-white px-2 py-1 rounded text-xs font-medium z-10">
-                  Warning: Multiple faces detected!
-                </div>
-              )}
-              {/* Device detection not available warning */}
-              {!cocoModel && (
-                <div className="bg-red-500 text-white px-2 py-1 rounded text-xs font-medium z-10">
-                  Device detection not available
+              
+              {faceMetrics.confidence > 0 && (
+                <div className="bg-blue-500 text-white px-2 py-1 rounded text-xs font-medium">
+                  Confidence: {(faceMetrics.confidence * 100).toFixed(0)}%
                 </div>
               )}
             </div>
+              
+            {/* Recording indicator */}
+            
+              <div className="absolute top-2 right-2 flex items-center space-x-1 bg-red-500 text-white px-2 py-1 rounded text-xs font-medium">
+                <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                <span>MONITORING</span>
+              </div>
+           
+
+            {/* Head Pose Indicator */}
+            {faceMetrics.faceCount > 0 && (
+              <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
+                Yaw: {faceMetrics.headPose.yaw.toFixed(1)}° | 
+                Pitch: {faceMetrics.headPose.pitch.toFixed(1)}° | 
+                Roll: {faceMetrics.headPose.roll.toFixed(1)}°
+              </div>
+            )}
+
+            {/* Blink Detection */}
+            {faceMetrics.eyeAspectRatio > 0 && (
+              <div className="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
+                EAR: {faceMetrics.eyeAspectRatio.toFixed(3)} | 
+                Blinks: {blinkHistory.length}
+              </div>
+            )}
+            </>)}
           </div>
+         
+          {IsReportReady && report? (<>
+          <button onClick={()=>{requestCameraPermission();setIsReportReady(false)}} className="text-xl text-white font-bold w-1/2 py-2 rounded-full mt-2 bg-green-800 shadow-black shadow-md hover:bg-green-600">Start new Session</button>          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4">
+      <div className="bg-white p-4 rounded-2xl shadow-md">
+        <div className='flex gap-2'>
+            <BarChart3/>
+        <h2 className="text-xl font-bold mb-4">Session Summary</h2>
         </div>
+        <Metric label="Session Duration" value={`${report.sessionDuration} sec`} />
+        <Metric label="Total Detections" value={report.totalDetections} />
+        <Metric label="Average Confidence" value={report.averageConfidence.toFixed(2)} />
+        <Metric label="Face Detection Rate" value={`${report.faceDetectionRate}%`} />
+        <Metric label="Presence Rate" value={`${report.presenceRate}%`} />
+      </div>
+
+      <div className="bg-white p-4 rounded-2xl shadow-md">
+        <div className='flex gap-2'>
+        <AlertTriangle></AlertTriangle>
+        <h2 className="text-xl font-bold mb-4">Violations</h2>
+        </div>
+       
+        {Object.entries(report.violations).map(([k, v]) => (
+          <Metric key={k} label={k.replace(/([A-Z])/g, ' $1')} value={v} />
+        ))}
+      </div>
+
+      <div className="bg-white p-4 rounded-2xl shadow-md">
+        <div className='flex gap-2'>
+        <Brain></Brain>
+        <h2 className="text-xl font-bold mb-4"> Head Pose Stats</h2>
+        </div>
+        {Object.entries(report.headPoseStats).map(([k, v]) => (
+          <Metric key={k} label={k.replace(/([A-Z])/g, ' $1')} value={v.toFixed(2)} />
+        ))}
+      </div>
+
+      <div className="bg-white p-4 rounded-2xl shadow-md">
+        <div className="flex gap-2">
+        <Eye></Eye>
+        <h2 className="text-xl font-bold mb-4"> Eye Movement Stats</h2>
+        </div>
+        {Object.entries(report.eyeMovementStats).map(([k, v]) => (
+          <Metric key={k} label={k.replace(/([A-Z])/g, ' $1')} value={v.toFixed(2)} />
+        ))}
+      </div>
+
+      <div className="md:col-span-2 bg-white p-4 rounded-2xl shadow-md">
+        <div className="flex gap-2">
+        <LineChart></LineChart>
+        <h2 className="text-xl font-bold mb-4">Scores</h2>
+        </div>
+        <ScoreBar label="Attention Score" value={report.attentionScore} color="bg-blue-500" />
+        <ScoreBar label="Stability Score" value={report.stabilityScore} color="bg-green-500" />
+        <ScoreBar label="Overall Score" value={report.overallScore} color="bg-purple-500" />
+      </div>
+
+      <div className="md:col-span-2 bg-white p-4 rounded-2xl shadow-md">
+        <div className="flex gape">
+        <NotebookPen></NotebookPen>
+        <h2 className="text-xl font-bold mb-4">Recommendations</h2>
+        </div>
+        <ul className="list-disc list-inside text-sm text-gray-600">
+          {report.recommendations.map((rec: string, idx: number) => (
+            <li key={idx}>{rec}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+            </>     
+            )
+          :<button onClick={stopMonitoring} className="text-xl text-white font-bold w-1/2 py-2 rounded-full mt-2 bg-red-800 shadow-black shadow-md hover:bg-red-600">Stop session</button>
+        }         
+          
+        </div>
+
+        {/* Monitoring Dashboard */}
+        {!IsReportReady &&(
+        <div className="space-y-4">
+          {/* Face Detection Status */}
+          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors duration-200">
+            <h4 className="font-medium text-gray-900 dark:text-white mb-3 transition-colors duration-200">Face Detection Status</h4>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600 dark:text-gray-400 transition-colors duration-200">Models Loaded:</span>
+                <span className={`font-medium ${modelsLoaded ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'} transition-colors duration-200`}>
+                  {modelsLoaded ? 'Yes' : 'Loading...'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600 dark:text-gray-400 transition-colors duration-200">Face Count:</span>
+                <span className={`font-medium ${
+                  faceMetrics.faceCount === 1 ? 'text-green-600 dark:text-green-400' : 
+                  faceMetrics.faceCount > 1 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'
+                } transition-colors duration-200`}>
+                  {faceMetrics.faceCount}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600 dark:text-gray-400 transition-colors duration-200">Confidence:</span>
+                <span className="font-medium text-blue-600 dark:text-blue-400 transition-colors duration-200">
+                  {(faceMetrics.confidence * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600 dark:text-gray-400 transition-colors duration-200">Detections:</span>
+                <span className="font-medium text-purple-600 dark:text-purple-400 transition-colors duration-200">
+                  {detectionHistory.length}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Head Pose Analysis */}
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-4 transition-colors duration-200">
+            <h4 className="font-medium text-blue-900 dark:text-blue-300 mb-2 transition-colors duration-200">Head Pose Analysis</h4>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-blue-800 dark:text-blue-200 transition-colors duration-200">Yaw (Left/Right):</span>
+                <span className={`font-medium ${Math.abs(faceMetrics.headPose.yaw) > 30 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'} transition-colors duration-200`}>
+                  {faceMetrics.headPose.yaw.toFixed(1)}°
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-blue-800 dark:text-blue-200 transition-colors duration-200">Pitch (Up/Down):</span>
+                <span className={`font-medium ${Math.abs(faceMetrics.headPose.pitch) > 25 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'} transition-colors duration-200`}>
+                  {faceMetrics.headPose.pitch.toFixed(1)}°
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-blue-800 dark:text-blue-200 transition-colors duration-200">Roll (Tilt):</span>
+                <span className="font-medium text-blue-600 dark:text-blue-400 transition-colors duration-200">
+                  {faceMetrics.headPose.roll.toFixed(1)}°
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Eye Movement Analysis */}
+          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-4 transition-colors duration-200">
+            <h4 className="font-medium text-green-900 dark:text-green-300 mb-2 transition-colors duration-200">Eye Movement</h4>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-green-800 dark:text-green-200 transition-colors duration-200">Eye Aspect Ratio:</span>
+                <span className="font-medium text-green-600 dark:text-green-400 transition-colors duration-200">
+                  {faceMetrics.eyeAspectRatio.toFixed(3)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-green-800 dark:text-green-200 transition-colors duration-200">Blink Count:</span>
+                <span className="font-medium text-green-600 dark:text-green-400 transition-colors duration-200">
+                  {blinkHistory.length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-green-800 dark:text-green-200 transition-colors duration-200">Blink Rate:</span>
+                <span className="font-medium text-green-600 dark:text-green-400 transition-colors duration-200">
+                  {sessionStartTime > 0 ? 
+                    ((blinkHistory.length / ((Date.now() - sessionStartTime) / 1000)) * 60).toFixed(1) : 
+                    '0.0'
+                  } /min
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Violations Log */}
+          {violations.length > 0 && (
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-4 transition-colors duration-200">
+              <h4 className="font-medium text-red-900 dark:text-red-300 mb-2 transition-colors duration-200">Recent Violations</h4>
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {violations.slice(-5).map((violation, index) => (
+                  <div key={index} className={`text-xs p-2 rounded ${
+                    violation.severity === 'high' ? 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300' :
+                    violation.severity === 'medium' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300' :
+                    'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300'
+                  } transition-colors duration-200`}>
+                    <div className="font-medium">{violation.type.replace('_', ' ').toUpperCase()}</div>
+                    <div>{violation.time} - {violation.severity} severity</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Session Statistics */}
+          <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-lg p-4 transition-colors duration-200">
+            <div className="flex items-center space-x-2 mb-2">
+              <BarChart3 className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+              <h4 className="font-medium text-purple-900 dark:text-purple-300 transition-colors duration-200">Session Stats</h4>
+            </div>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-purple-800 dark:text-purple-200 transition-colors duration-200">Duration:</span>
+                <span className="font-medium text-purple-600 dark:text-purple-400 transition-colors duration-200">
+                  {sessionStartTime > 0 ? 
+                    Math.floor((Date.now() - sessionStartTime) / 1000) : 
+                    0
+                  }s
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-purple-800 dark:text-purple-200 transition-colors duration-200">Total Violations:</span>
+                <span className="font-medium text-purple-600 dark:text-purple-400 transition-colors duration-200">
+                  {violations.length}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Guidelines */}
+          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-4 transition-colors duration-200">
+            <h4 className="font-medium text-green-900 dark:text-green-300 mb-2 transition-colors duration-200">Face-API.js Guidelines</h4>
+            <ul className="text-xs text-green-800 dark:text-green-200 space-y-1 transition-colors duration-200">
+              <li>• Keep your face clearly visible and centered</li>
+              <li>• Look directly at the camera regularly</li>
+              <li>• Avoid excessive head movements</li>
+              <li>• Ensure you are alone in the frame</li>
+              <li>• Maintain good lighting on your face</li>
+              <li>• Blink naturally for best detection</li>
+            </ul>
+          </div>
+        </div>)
+        }
       </div>
     </div>
   );
