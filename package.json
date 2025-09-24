@@ -19,6 +19,7 @@
     "chart.js": "^4.4.0",
     "date-fns": "^2.30.0",
     "face-api.js": "^0.22.2",
+    "fuse.js": "^7.1.0",
     "lucide-react": "^0.344.0",
     "mammoth": "^1.6.0",
     "pdf-parse": "^1.1.1",
