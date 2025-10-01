@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import Navbar from '../Navbar/Navbar';
 import {
     Brain,
     Zap,
@@ -119,8 +120,11 @@ export const HomePage: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-[#AFDDE5] dark:bg-[#003135] transition-colors duration-200">
+
+            {/*Navbar*/}
+            <Navbar />
             {/* Hero Section */}
-            <div className="relative overflow-hidden bg-[#AFDDE5] dark:bg-[#003135] transition-colors duration-200">
+            <div className="relative overflow-hidden bg-[#AFDDE5] dark:bg-[#003135] transition-colors duration-200" id="home">
                 {/* Background Patterns */}
                 <div className="absolute inset-0 overflow-hidden opacity-20 dark:opacity-10">
                     <div className="absolute -top-24 -left-24 w-96 h-96 bg-[#0FA4AF] rounded-full mix-blend-multiply filter blur-3xl animate-blob"></div>
@@ -210,7 +214,7 @@ export const HomePage: React.FC = () => {
             </div>
 
             {/* Features Section */}
-            <div className="py-20 bg-gray-50 dark:bg-gray-800 transition-colors duration-200">
+            <div className="py-20 bg-gray-50 dark:bg-gray-800 transition-colors duration-200" id="features">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="text-center mb-16">
                         <div className="inline-flex items-center space-x-2 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 px-4 py-2 rounded-full text-sm font-medium mb-4">
@@ -243,7 +247,7 @@ export const HomePage: React.FC = () => {
             </div>
 
             {/* How It Works */}
-            <div className="py-20 bg-white dark:bg-gray-900 transition-colors duration-200">
+            <div className="py-20 bg-white dark:bg-gray-900 transition-colors duration-200" id="about">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="text-center mb-16">
                         <div className="inline-flex items-center space-x-2 bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 px-4 py-2 rounded-full text-sm font-medium mb-4">
@@ -293,7 +297,7 @@ export const HomePage: React.FC = () => {
             </div>
 
             {/* Question Categories */}
-            <div className="py-20 bg-gray-50 dark:bg-gray-800 transition-colors duration-200">
+            <div className="py-20 bg-gray-50 dark:bg-gray-800 transition-colors duration-200" id="prephub">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="text-center mb-16">
                         <div className="inline-flex items-center space-x-2 bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 px-4 py-2 rounded-full text-sm font-medium mb-4">
