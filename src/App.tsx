@@ -23,6 +23,8 @@ import { HistoryPage } from './components/History/HistoryPage';
 import { Settings } from './components/Settings/Settings';
 import { Profile } from './components/Profile/Profile';
 import { Helmet } from 'react-helmet';
+import { AptitudePage } from './pages/AptitudePage';
+
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -98,6 +100,14 @@ const AppContent: React.FC = () => {
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
         {user && <Header />}
         <Routes>
+          <Route
+            path="/aptitude"
+            element={
+            <ProtectedRoute>
+             <AptitudePage />
+            </ProtectedRoute> } 
+            />
+   
           {/* Home page is always accessible */}
           <Route path="/" element={<HomePage />} />
           <Route 
