@@ -25,7 +25,8 @@ import {
   Clock,
   Search,
   Bell,
-  CheckCircle
+  CheckCircle,
+  Calculator
 } from 'lucide-react';
 
 export const Header: React.FC = () => {
@@ -133,6 +134,19 @@ export const Header: React.FC = () => {
                 >
                   <BookOpen className="h-4 w-4" />
                   <span>Study Plan</span>
+                </Link>
+
+                {/*Added Aptitude Link */}
+                <Link
+                  to="/aptitude"
+                  className={`flex items-center space-x-1 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    isActive('/aptitude')
+                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                      : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  <Calculator className="h-4 w-4" />
+                  <span>Aptitude</span>
                 </Link>
                 
                 {/* AI Tools Dropdown */}
@@ -486,6 +500,20 @@ export const Header: React.FC = () => {
                   >
                     <BookOpen className="h-5 w-5" />
                     <span>Study Plan</span>
+                  </Link>
+
+                  {/* ⭐ APTITUDE LINK ADDED HERE FOR MOBILE */}
+                  <Link
+                    to="/aptitude"
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-base font-medium transition-all duration-200 ${
+                      isActive('/aptitude')
+                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                        : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                    }`}
+                    onClick={() => setShowMobileMenu(false)}
+                  >
+                    <Calculator className="h-5 w-5" />
+                    <span>Aptitude</span>
                   </Link>
                   
                   <div className="px-3 py-2">
